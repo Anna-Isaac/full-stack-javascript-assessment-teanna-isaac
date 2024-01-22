@@ -111,3 +111,4 @@ Good luck with your assessment! You've got this 💪
 # full-stack-javascript-assessment-teanna-isaac
 # full-stack-javascript-assessment-teanna-isaac
 # full-stack-javascript-assessment-teanna-isaac
+# full-stack-javascript-assessment-teanna-isaac
