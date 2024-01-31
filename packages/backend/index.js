@@ -3,9 +3,9 @@ const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const User = require('./models/User.js');
-const Place = require('./models/Place.js');
+const jwt = require('jsonwebtoken')
+const User = require('./models/User');
+const Place = require('./models/Booking');
 const cookieParser = require('cookie-parser');
 const imageDownloader = require('image-downloader');
 const multer = require('multer');
@@ -18,13 +18,15 @@ const app = express();
 // Constants and configurations
 const bcryptSalt = bcrypt.genSaltSync(10);
 const jsonwebtoken = 'ahdjdijlsls1dks';
+// Add this somewhere in your code where jwtSecret is defined
+const jwtSecret = 'pizza-rat-ski-slope';
 
 // Configure CORS
 app.use(cors({
   credentials: true,
   preflightContinue: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  origin: 'http://localhost:3000',
+  origin: 'http://localhost:5173',
   allowedHeaders: [
     "X-Api-Key",
     "X-Requested-With",
@@ -40,6 +42,12 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 app.use('/uploads', express.static(__dirname + '/uploads'));
+
+
+// Test route
+app.get('/test', (req, res) => {
+  res.json('test ok');
+});
 
 // MongoDB connection
 const uri = process.env.MONGO_URI;
@@ -59,51 +67,49 @@ client.connect((err) => {
     return;
   }
   console.log("Connected to MongoDB");
-  client.close();
 });
 
-// Test route
-app.get('/test', (req, res) => {
-  res.json('test ok');
-});
 
 // User registration route
 app.post('/register', async (req, res) => {
-  const { username, password } = req.body;
+  const { name, email, password } = req.body;
+
   try {
     const userDoc = await User.create({
-      username,
+      name,
+      email,
       password: bcrypt.hashSync(password, bcryptSalt),
     });
     res.json(userDoc);
   } catch (e) {
-    console.log(e);
-    res.status(400).json(e);
+    res.status(422).json(e);
   }
 });
 
-// User login route
+//User login route
 app.post('/login', async (req, res) => {
-  const { username, password } = req.body;
-  const userDoc = await User.findOne({ username });
-  const passOk = bcrypt.compareSync(password, userDoc.password);
-  if (passOk) {
-    // User logged in
-    jwt.sign({ username, id: userDoc._id }, jwtSecret, {}, (err, token) => {
-      if (err) throw err;
-      res.cookie('token', token).json({
-        id: userDoc._id,
-        username,
+  const { email, password } = req.body;
+  const userDoc = await User.findOne({ email });
+  if (userDoc) {
+    const passOk = bcrypt.compareSync(password, userDoc.password);
+    if (passOk) {
+      jwt.sign({
+        email: userDoc.email,
+        id: userDoc._id
+      }, jwtSecret, {}, (err, token) => {
+        if (err) throw err;
+        res.cookie('token', token).json(userDoc);
       });
-    });
+    } else {
+      res.status(422).json('pass not ok');
+    }
   } else {
-    res.status(400).json('Wrong credentials');
+    res.json('not found');
   }
 });
 
-// Profile retrieval route
+//User Profile
 app.get('/profile', (req, res) => {
-  mongoose.connect(process.env.MONGO_URL);
   const { token } = req.cookies;
   if (token) {
     jwt.verify(token, jwtSecret, {}, async (err, userData) => {
@@ -116,56 +122,71 @@ app.get('/profile', (req, res) => {
   }
 });
 
-// User logout route
+//User Logout
 app.post('/logout', (req, res) => {
-  // Code for user logout
+  res.cookie('token', '').json(true);
 });
 
-// Upload photo by link route
+//Upload by link
 app.post('/upload-by-link', async (req, res) => {
   const { link } = req.body;
   const newName = 'photo' + Date.now() + '.jpg';
-  await imageDownloader.image({
-    url: link,
-    dest: '/tmp/' + newName,
-  });
-  const url = await uploadToS3('/tmp/' + newName, newName, mime.lookup('/tmp/' + newName));
-  res.json(url);
+
+  try {
+    await imageDownloader.image({
+      url: link,
+      dest: __dirname + '/uploads/' + newName,
+    });
+
+    res.json(newName);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
-// Upload photos route
-const photosMiddleware = multer({ dest: '/tmp' });
-app.post('/upload', photosMiddleware.array('photos', 100), async (req, res) => {
-  const uploadedFiles = [];
-  for (let i = 0; i < req.files.length; i++) {
-    const { path, originalname, mimetype } = req.files[i];
-    const url = await uploadToS3(path, originalname, mimetype);
-    uploadedFiles.push(url);
-  }
+// Upload photo
+const photosMiddleware = multer({ dest: 'uploads/' });
+app.post('/upload', photosMiddleware.array('photos', 100), (req, res) => {
+  const uploadedFiles = req.files.map(file => file.filename);
   res.json(uploadedFiles);
 });
 
-// Places creation route
-app.post('/places', (req,res) => {
-  const {token} = req.cookies;
+//Post a listing
+app.post('/places', (req, res) => {
+  const { token } = req.cookies;
   const {
-    title,address,addedPhotos,description,price,
-    perks,extraInfo,checkIn,checkOut,maxGuests,
+    title, address, photos:addedPhotos, description,
+    speciality, extraInfo, opening, closing
   } = req.body;
   jwt.verify(token, jwtSecret, {}, async (err, userData) => {
     if (err) throw err;
     const placeDoc = await Place.create({
-      owner:userData.id,price,
-      title,address,photos:addedPhotos,description,
-      perks,extraInfo,checkIn,checkOut,maxGuests,
+      owner: userData.id,
+      title, 
+      address, 
+      photos, 
+      description,
+      speciality, 
+      extraInfo, 
+      opening, 
+      closing
     });
     res.json(placeDoc);
   });
 });
+
+//Data from listings
+app.get('/places',(req,res) => {
+  const { token } = req.cookies;
+  jwt.verify(token, jwtSecret, {}, async (err, userData) => {
+    const {id} = userData;
+    res.json(await Place.find(owner.id) );
+  });
+});
+
 
 // Server configuration and start
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server started on http://localhost:${PORT}`);
 });
-
